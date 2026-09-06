@@ -203,8 +203,25 @@ function Physics (mcData, world) {
     }
 
     let playerBB = getPlayerBB(pos)
-    const queryBB = playerBB.clone().extend(dx, dy, dz)
-    const surroundingBBs = getSurroundingBBs(world, queryBB)
+    let queryBB = playerBB.clone().extend(dx, dy, dz)
+    let surroundingBBs = getSurroundingBBs(world, queryBB)
+    if (entity.onGround) {
+      let supportGrowth = 0
+      for (const blockBB of surroundingBBs) {
+        const overlap = blockBB.maxY - playerBB.minY
+        if (blockBB.minY < playerBB.minY && blockBB.intersects(playerBB) && overlap > 0 && overlap <= physics.stepHeight) {
+          supportGrowth = Math.max(supportGrowth, overlap)
+        }
+      }
+      if (supportGrowth > 0) {
+        const liftedBB = playerBB.clone().offset(0, supportGrowth, 0)
+        if (!surroundingBBs.some(blockBB => blockBB.intersects(liftedBB))) {
+          playerBB = liftedBB
+          queryBB = playerBB.clone().extend(dx, dy, dz)
+          surroundingBBs = getSurroundingBBs(world, queryBB)
+        }
+      }
+    }
     const oldBB = playerBB.clone()
 
     for (const blockBB of surroundingBBs) {
