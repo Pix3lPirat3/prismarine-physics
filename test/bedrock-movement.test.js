@@ -85,17 +85,26 @@ describe('bedrock physics', function () {
     assert.ok(Math.abs(bot.entity.position.y - 65) < 1e-6, 'y unchanged on flat ground')
   })
 
-  it('cruises near vanilla Bedrock walk/sprint speed', function () {
-    // Fitted Bedrock constants target real-client cruise: walk ~2.75 b/s, sprint ~5.87 b/s.
-    const cruise = (sprint) => {
-      const { bot } = simulate(flat, { ...noControl, forward: true, sprint }, 40)
-      return Math.hypot(bot.entity.position.x - 0.5, bot.entity.position.z - 0.5) / 40 * 20
+  it('reaches vanilla Bedrock terminal walk/sprint speed', function () {
+    // Bedrock constants are tuned so the engine's terminal cruise matches a real 1.26.51 client: walk 2.75 b/s,
+    // sprint 5.87 b/s. Measure terminal speed (average of the last 20 of 100 ticks, past the acceleration ramp).
+    const terminal = (sprint) => {
+      const bot = fakePlayer()
+      const physics = Physics(registry, flat)
+      const control = { ...noControl, forward: true, sprint }
+      let last = bot.entity.position.clone(); let sum = 0
+      for (let t = 0; t < 100; t++) {
+        physics.simulatePlayer(new PlayerState(bot, control), flat).apply(bot)
+        if (t >= 80) sum += bot.entity.position.distanceTo(last) * 20
+        last = bot.entity.position.clone()
+      }
+      return sum / 20
     }
-    const walk = cruise(false)
-    const sprint = cruise(true)
-    assert.ok(walk > 2.5 && walk < 3.0, `walk cruise ~2.75 b/s (got ${walk.toFixed(2)})`)
-    assert.ok(sprint > 5.5 && sprint < 6.2, `sprint cruise ~5.87 b/s (got ${sprint.toFixed(2)})`)
-    assert.ok(sprint / walk > 1.9, `Bedrock sprint is ~2.1x walk (got ${(sprint / walk).toFixed(2)}x)`)
+    const walk = terminal(false)
+    const sprint = terminal(true)
+    assert.ok(Math.abs(walk - 2.75) < 0.06, `walk terminal ~2.75 b/s (got ${walk.toFixed(3)})`)
+    assert.ok(Math.abs(sprint - 5.87) < 0.12, `sprint terminal ~5.87 b/s (got ${sprint.toFixed(3)})`)
+    assert.ok(sprint / walk > 2.0 && sprint / walk < 2.2, `Bedrock sprint is ~2.13x walk (got ${(sprint / walk).toFixed(2)}x)`)
   })
 
   it('jumps to roughly vanilla height', function () {
