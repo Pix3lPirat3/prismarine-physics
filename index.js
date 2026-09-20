@@ -11,6 +11,9 @@ function makeSupportFeature (mcData) {
 function Physics (mcData, world) {
   const supportFeature = makeSupportFeature(mcData)
   const blocksByName = mcData.blocksByName
+  // Bedrock edition: prismarine-registry reports type 'bedrock' (Java is 'pc'). Bedrock's data lacks the Java-only
+  // attribute table and Java feature flags, so a few constructor reads need edition-aware fallbacks.
+  const isBedrock = mcData.type === 'bedrock'
 
   // Block Slipperiness
   // https://www.mcpk.wiki/w/index.php?title=Slipperiness
@@ -96,7 +99,8 @@ function Physics (mcData, world) {
       maxUp: 0.7
     },
     slowFalling: 0.125,
-    movementSpeedAttribute: mcData.attributesByName.movementSpeed.resource,
+    // Java exposes the movement-speed attribute name in mcData; Bedrock has no attribute table, so use its resource id.
+    movementSpeedAttribute: mcData.attributesByName?.movementSpeed?.resource ?? 'minecraft:movement',
     sprintingUUID: '662a6b8d-da3e-4c1c-8813-96ea6097278d' // SPEED_MODIFIER_SPRINTING_UUID is from LivingEntity.java
   }
 
@@ -106,6 +110,10 @@ function Physics (mcData, world) {
   } else if (supportFeature('proportionalLiquidGravity')) {
     physics.waterGravity = physics.gravity / 16
     physics.lavaGravity = physics.gravity / 4
+  } else if (isBedrock) {
+    // Bedrock uses independent liquid gravity (not derived from air gravity).
+    physics.waterGravity = 0.02
+    physics.lavaGravity = 0.02
   } else {
     throw new Error('No liquid gravity settings, have you made sure the liquid gravity features are up to date?')
   }
@@ -771,7 +779,7 @@ function Physics (mcData, world) {
 }
 
 function getEffectLevel (mcData, effectName, effects) {
-  const effectDescriptor = mcData.effectsByName[effectName]
+  const effectDescriptor = mcData.effectsByName?.[effectName]
   if (!effectDescriptor) {
     return 0
   }
@@ -783,7 +791,7 @@ function getEffectLevel (mcData, effectName, effects) {
 }
 
 function getEnchantmentLevel (mcData, enchantmentName, enchantments) {
-  const enchantmentDescriptor = mcData.enchantmentsByName[enchantmentName]
+  const enchantmentDescriptor = mcData.enchantmentsByName?.[enchantmentName]
   if (!enchantmentDescriptor) {
     return 0
   }
