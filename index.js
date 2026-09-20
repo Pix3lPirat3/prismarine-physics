@@ -118,6 +118,15 @@ function Physics (mcData, world) {
     throw new Error('No liquid gravity settings, have you made sure the liquid gravity features are up to date?')
   }
 
+  if (isBedrock) {
+    // First-pass Bedrock movement constants. Bedrock's movement math differs from Java in detail, but tuning the ground
+    // speed so this (Java) model reproduces vanilla Bedrock cruise gets walk/sprint close: measured from a real 1.26.51
+    // client, walk ~2.75 b/s and sprint ~5.87 b/s. playerSpeed/sprintSpeed are fitted to hit those in this engine; a
+    // full Bedrock movement model (accel curve, air control) is a follow-up. Gravity/jump already match Bedrock.
+    physics.playerSpeed = 0.0663
+    physics.sprintSpeed = 1.18
+  }
+
   function getPlayerBB (pos) {
     const w = physics.playerHalfWidth
     return new AABB(-w, 0, -w, w, physics.playerHeight, w).offset(pos.x, pos.y, pos.z)

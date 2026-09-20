@@ -85,6 +85,19 @@ describe('bedrock physics', function () {
     assert.ok(Math.abs(bot.entity.position.y - 65) < 1e-6, 'y unchanged on flat ground')
   })
 
+  it('cruises near vanilla Bedrock walk/sprint speed', function () {
+    // Fitted Bedrock constants target real-client cruise: walk ~2.75 b/s, sprint ~5.87 b/s.
+    const cruise = (sprint) => {
+      const { bot } = simulate(flat, { ...noControl, forward: true, sprint }, 40)
+      return Math.hypot(bot.entity.position.x - 0.5, bot.entity.position.z - 0.5) / 40 * 20
+    }
+    const walk = cruise(false)
+    const sprint = cruise(true)
+    assert.ok(walk > 2.5 && walk < 3.0, `walk cruise ~2.75 b/s (got ${walk.toFixed(2)})`)
+    assert.ok(sprint > 5.5 && sprint < 6.2, `sprint cruise ~5.87 b/s (got ${sprint.toFixed(2)})`)
+    assert.ok(sprint / walk > 1.9, `Bedrock sprint is ~2.1x walk (got ${(sprint / walk).toFixed(2)}x)`)
+  })
+
   it('jumps to roughly vanilla height', function () {
     const { maxY } = simulate(flat, { ...noControl, jump: true }, 14, b => { b.jumpQueued = true })
     const dY = maxY - 65
