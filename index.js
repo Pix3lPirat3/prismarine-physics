@@ -562,11 +562,13 @@ function Physics (mcData, world) {
       const blockUnder = world.getBlock(pos.offset(0, -1, 0))
       if (entity.onGround && blockUnder) {
         let playerSpeedAttribute
-        if (entity.attributes && entity.attributes[physics.movementSpeedAttribute]) {
-          // Use server-side player attributes
+        if (!isBedrock && entity.attributes && entity.attributes[physics.movementSpeedAttribute]) {
+          // Use server-side player attributes (Java shape: { value, modifiers }).
           playerSpeedAttribute = entity.attributes[physics.movementSpeedAttribute]
         } else {
-          // Create an attribute if the player does not have it
+          // Bedrock's server movement attribute is a different shape (current/min/max, no Java modifiers) and, fed
+          // through the Java speed formula, would give Java speed; use the fitted Bedrock playerSpeed constant instead.
+          // Java with no attribute also lands here.
           playerSpeedAttribute = attribute.createAttributeValue(physics.playerSpeed)
         }
         // Client-side sprinting (don't rely on server-side sprinting)
@@ -819,7 +821,9 @@ function getEnchantmentLevel (mcData, enchantmentName, enchantments) {
 
 class PlayerState {
   constructor (bot, control) {
-    const mcData = require('minecraft-data')(bot.version)
+    // Prefer the bot's registry (works for both editions; Bedrock's bot.version is a bare id that minecraft-data would
+    // resolve to the wrong edition). Fall back to minecraft-data for bare non-mineflayer callers.
+    const mcData = bot.registry ?? require('minecraft-data')(bot.version)
     const nbt = require('prismarine-nbt')
 
     // Input / Outputs
