@@ -215,10 +215,14 @@ function Physics (mcData, world) {
       }
       if (supportGrowth > 0) {
         const liftedBB = playerBB.clone().offset(0, supportGrowth, 0)
-        if (!surroundingBBs.some(blockBB => blockBB.intersects(liftedBB))) {
+        // Query the world for the LIFTED box's neighborhood before accepting: the original surroundingBBs were collected
+        // for the pre-lift query box, so a ceiling the lift newly reaches is not in that set and would be missed here.
+        const liftedQueryBB = liftedBB.clone().extend(dx, dy, dz)
+        const liftedSurroundingBBs = getSurroundingBBs(world, liftedQueryBB)
+        if (!liftedSurroundingBBs.some(blockBB => blockBB.intersects(liftedBB))) {
           playerBB = liftedBB
-          queryBB = playerBB.clone().extend(dx, dy, dz)
-          surroundingBBs = getSurroundingBBs(world, queryBB)
+          queryBB = liftedQueryBB
+          surroundingBBs = liftedSurroundingBBs
         }
       }
     }
