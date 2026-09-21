@@ -140,6 +140,21 @@ describe('Sprint state', () => {
     }
   })
 
+  it('keeps sprinting through a minor brush from diagonal (forward+right) input', () => {
+    // A diagonal input reaching the wall at the same shallow angle as a forward-only brush must also count as minor.
+    // The old collision check flipped the strafe sign, so it mis-classified strafe-containing brushes and dropped sprint.
+    const { data, world } = makeWorld('26.1', (pos) => pos.x === -1 && pos.y < 62)
+    const physics = Physics(data, world)
+    const player = makePlayer('26.1', new Vec3(0.5, 60, 0.5), 49 * Math.PI / 180)
+    let moved = new Vec3(1, 0, 0)
+    for (let i = 0; i < 60 && !(player.entity.isCollidedHorizontally && moved.x === 0); i++) moved = tick(physics, world, player, { forward: true, right: true, sprint: true })
+    expect(player.entity.isCollidedHorizontally).toBe(true)
+    expect(player.entity.isSprinting).toBe(true)
+    expect(player.entity.minorHorizontalCollision).toBe(true)
+    tick(physics, world, player, { forward: true, right: true, sprint: true })
+    expect(player.entity.isSprinting).toBe(true)
+  })
+
   it('treats every collision as a full stop before 1.18', () => {
     const { data, world } = makeWorld('1.16.5', (pos) => pos.x === -1 && pos.y < 62)
     const physics = Physics(data, world)

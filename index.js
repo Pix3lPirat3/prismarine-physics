@@ -419,6 +419,16 @@ function Physics (mcData, world) {
     }
   }
 
+  // The single input-to-world transform LocalPlayer uses: a (strafe, forward) impulse becomes a world direction under the
+  // entity's yaw. applyHeading and isHorizontalCollisionMinor MUST share it so their conventions cannot drift (the strafe
+  // sign in particular): x = -(strafe*cos + forward*sin), z = forward*cos - strafe*sin.
+  function inputToWorld (strafe, forward, yaw) {
+    const a = Math.PI - yaw
+    const sin = Math.sin(a)
+    const cos = Math.cos(a)
+    return { x: -(strafe * cos + forward * sin), z: forward * cos - strafe * sin }
+  }
+
   function applyHeading (entity, strafe, forward, multiplier) {
     let speed = Math.sqrt(strafe * strafe + forward * forward)
     if (speed < 0.01) return new Vec3(0, 0, 0)
@@ -428,13 +438,10 @@ function Physics (mcData, world) {
     strafe *= speed
     forward *= speed
 
-    const yaw = Math.PI - entity.yaw
-    const sin = Math.sin(yaw)
-    const cos = Math.cos(yaw)
-
+    const dir = inputToWorld(strafe, forward, entity.yaw)
     const vel = entity.vel
-    vel.x -= strafe * cos + forward * sin
-    vel.z += forward * cos - strafe * sin
+    vel.x += dir.x
+    vel.z += dir.z
   }
 
   const climbableTrapdoorFeature = supportFeature('climbableTrapdoor')
@@ -470,15 +477,13 @@ function Physics (mcData, world) {
   // LocalPlayer.isHorizontalCollisionMinor: a collision counts as minor when the move that survived it still
   // points within 8 degrees of where the inputs wanted to go (brushing a wall), which keeps the sprint
   function isHorizontalCollisionMinor (entity, dx, dz) {
-    const yaw = Math.PI - entity.yaw
-    const sin = Math.sin(yaw)
-    const cos = Math.cos(yaw)
-    const wantX = entity.inputStrafe * cos - entity.inputForward * sin
-    const wantZ = entity.inputForward * cos + entity.inputStrafe * sin
-    const wantSq = wantX * wantX + wantZ * wantZ
+    // Use the same input-to-world transform as applyHeading so the desired direction matches where the move actually went
+    // (an earlier local copy flipped the strafe sign, so diagonal input was compared against the wrong direction).
+    const want = inputToWorld(entity.inputStrafe, entity.inputForward, entity.yaw)
+    const wantSq = want.x * want.x + want.z * want.z
     const moveSq = dx * dx + dz * dz
     if (wantSq < 1e-5 || moveSq < 1e-5) return false
-    const angle = Math.acos((wantX * dx + wantZ * dz) / Math.sqrt(wantSq * moveSq))
+    const angle = Math.acos((want.x * dx + want.z * dz) / Math.sqrt(wantSq * moveSq))
     return angle < physics.minorCollisionAngle
   }
 
