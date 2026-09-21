@@ -117,4 +117,29 @@ describe('Basic tests', () => {
     expect(Math.max(steps[38], steps[39])).toBeLessThan(0.1)
     expect(Math.min(steps[38], steps[39])).toBeGreaterThan(0.05)
   })
+
+  it('reads the bounced velocity for SlimeBlock.stepOn on a 1.15.2 landing', () => {
+    // Older-version landing case (1.15.2). SlimeBlock.stepOn runs inside Entity.move on the just-bounced velocity
+    // (+0.0784), before travel applies gravity/drag. A grounded player landing with velocity (0.1, -0.0784, 0):
+    // step scale 0.4 + 0.0784*0.2 = 0.41568, then slime horizontal drag 0.8*0.91 -> next vx 0.030261504.
+    // (Applying the step after travel would read the post-gravity -0.001568 and give 0.02914283008.)
+    const data = require('minecraft-data')('1.15.2')
+    const VBlock = require('prismarine-block')('1.15.2')
+    const slime = data.blocksByName.slime_block.id
+    const world = {
+      getBlock: (pos) => {
+        const b = new VBlock(Math.floor(pos.y) <= 60 ? slime : data.blocksByName.air.id, 0, 0)
+        b.position = pos
+        return b
+      }
+    }
+    const physics = Physics(data, world)
+    const player = fakePlayer(new Vec3(0.5, 61, 0.5))
+    player.version = '1.15.2'
+    player.entity.onGround = true
+    player.entity.velocity = new Vec3(0.1, -0.0784, 0)
+    const state = new PlayerState(player, { forward: false, back: false, left: false, right: false, jump: false, sprint: false, sneak: false })
+    physics.simulatePlayer(state, world).apply(player)
+    expect(player.entity.velocity.x).toBeCloseTo(0.030261504, 9)
+  })
 })

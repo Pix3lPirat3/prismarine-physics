@@ -313,6 +313,11 @@ function Physics (mcData, world) {
       }
     }
 
+    // SlimeBlock.stepOn runs here inside Entity.move - after the landing/bounce sets vel.y, but BEFORE
+    // LivingEntity.travel applies gravity and horizontal drag. The step multiplier reads that vel.y, so it must run at
+    // this point; applying it after travel reads the post-gravity velocity and gives a different result.
+    applyStepOn(entity, world)
+
     // Finally, apply block collisions (web, soulsand...)
     playerBB.contract(0.001, 0.001, 0.001)
     const cursor = new Vec3(0, 0, 0)
@@ -410,8 +415,9 @@ function Physics (mcData, world) {
     return blockSpeedFactorOf(world.getBlock(getOnPos(entity, 0.500001)))
   }
 
-  // SlimeBlock.stepOn, run after the travel step (gravity and friction already applied): standing
-  // on slime scales the horizontal velocity by 0.4 + |vy| * 0.2 while |vy| < 0.1, unless sneaking
+  // SlimeBlock.stepOn, run from inside moveEntity right after the landing/bounce and before travel applies gravity and
+  // drag (the game's Entity.move order): standing on slime scales the horizontal velocity by 0.4 + |vy| * 0.2 while
+  // |vy| < 0.1, unless sneaking. It reads the bounced/landing vel.y, not the post-travel value.
   function applyStepOn (entity, world) {
     if (!supportFeature('velocityBlocksOnTop') || !entity.onGround || entity.control.sneak) return
     const onBlock = world.getBlock(getOnPos(entity, 0.2))
@@ -826,7 +832,6 @@ function Physics (mcData, world) {
     }
 
     moveEntityWithHeading(entity, world, strafe, forward)
-    applyStepOn(entity, world)
 
     return entity
   }
