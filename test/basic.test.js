@@ -107,6 +107,43 @@ describe('Basic tests', () => {
     expect(rows[dip + 1].vy).toBeCloseTo(before * 0.8 - 0.08 / 16, 6)
   })
 
+  // Shallow lava (surface just above the feet) is the case that distinguishes the versions: 1.16+ has a dedicated shallow
+  // regime in LivingEntity.travel, while 1.13-1.15 have no split and scale the whole lava velocity by lavaInertia then
+  // subtract gravity/4. Same physical setup, feet at 60.5 over lava topping out ~60.79, initial upward velocity 0.1.
+  function lavaFloatVy (ver) {
+    const data = require('minecraft-data')(ver)
+    const VBlock = require('prismarine-block')(ver)
+    const world = {
+      getBlock: (pos) => {
+        const type = (pos.y <= 60 && pos.y > 50) ? data.blocksByName.lava.id : (pos.y <= 50 ? data.blocksByName.stone.id : data.blocksByName.air.id)
+        const b = new VBlock(type, 0, 0)
+        b.position = pos
+        return b
+      }
+    }
+    const physics = Physics(data, world)
+    const player = fakePlayer(new Vec3(0.5, 60.5, 0.5))
+    player.version = ver
+    player.entity.velocity.y = 0.1
+    const state = new PlayerState(player, { forward: false, back: false, left: false, right: false, jump: false, sprint: false, sneak: false })
+    physics.simulatePlayer(state, world).apply(player)
+    return { inLava: player.entity.isInLava, vy: player.entity.velocity.y }
+  }
+
+  it('uses the pre-1.16 deep-only lava rule on 1.15.2 (no shallow split)', () => {
+    const { inLava, vy } = lavaFloatVy('1.15.2')
+    expect(inLava).toBe(true)
+    // deep branch: 0.1 * lavaInertia(0.5) - gravity/4 (0.08/4) = 0.05 - 0.02 = 0.03
+    expect(vy).toBeCloseTo(0.03, 6)
+  })
+
+  it('uses the shallow lava regime on 1.16.5', () => {
+    const { inLava, vy } = lavaFloatVy('1.16.5')
+    expect(inLava).toBe(true)
+    // shallow branch: vy *= 0.8 -> 0.08, fallingAdjusted(0.08) = 0.08 - gravity/16, then - gravity/4 = 0.055
+    expect(vy).toBeCloseTo(0.055, 6)
+  })
+
   it('keeps the 1.8 fluid test on old versions', () => {
     const water18 = mcData.blocksByName.water.id
     const world = {

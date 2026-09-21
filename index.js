@@ -511,7 +511,9 @@ function Physics (mcData, world) {
           vel.y *= physics.waterInertia
           vel.z *= horizontalInertia
           vel.y = fallingAdjusted(vel.y)
-        } else if (entity.lavaHeight <= physics.fluidJumpThreshold) {
+        } else if (shallowLavaMovement && entity.lavaHeight <= physics.fluidJumpThreshold) {
+          // Shallow-lava regime, 1.16+ only. Before 1.16 LivingEntity.travel has no shallow/deep split - lava always
+          // takes the deep branch below (scale by lavaInertia, subtract gravity/4).
           vel.x *= physics.lavaInertia
           vel.y *= 0.8
           vel.z *= physics.lavaInertia
@@ -716,6 +718,7 @@ function Physics (mcData, world) {
   // is above the bottom of the box deflated by 0.001; before that (handleMaterialAcceleration)
   // the box was shrunk by 0.4 at the top and compared through ceil(maxY).
   const fluidHeightFromFeet = supportFeature('fluidHeightFromFeet')
+  const shallowLavaMovement = supportFeature('shallowLavaMovement')
 
   function isWaterBlock (block) {
     return block && (waterIds.includes(block.type) || waterLike.has(block.type) || block.isWaterlogged)
