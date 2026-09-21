@@ -469,7 +469,9 @@ function Physics (mcData, world) {
 
     const gravityMultiplier = (vel.y <= 0 && entity.slowFalling > 0) ? physics.slowFalling : 1
 
-    if (entity.isInWater || entity.isInLava) {
+    // Player.isAffectedByFluids is false while flying, so a flying player in water or lava takes
+    // the flight movement below rather than the fluid one.
+    if (!entity.flying && (entity.isInWater || entity.isInLava)) {
       // Water / Lava movement
       const lastY = pos.y
       let acceleration = physics.liquidAcceleration
@@ -543,6 +545,9 @@ function Physics (mcData, world) {
       let acceleration = 0.0
       let inertia = 0.0
       const blockUnder = world.getBlock(pos.offset(0, -1, 0))
+      // Player.travel wraps the move while flying and puts back the vertical velocity the tick
+      // started with, damped, so it is read before anything below touches it.
+      const flightEntryVelY = vel.y
       if (entity.onGround && blockUnder) {
         let playerSpeedAttribute
         if (entity.attributes && entity.attributes[physics.movementSpeedAttribute]) {
@@ -569,6 +574,11 @@ function Physics (mcData, world) {
         inertia = (blockSlipperiness[blockUnder.type] || physics.defaultSlipperiness) * 0.91
         acceleration = attributeSpeed * (0.1627714 / (inertia * inertia * inertia))
         if (acceleration < 0) acceleration = 0 // acceleration should not be negative
+      } else if (entity.flying) {
+        // Player.getFlyingSpeed: creative flight accelerates at the abilities' flying speed,
+        // doubled while sprinting, in place of the 0.02 / 0.026 of a falling player.
+        acceleration = entity.control.sprint ? entity.flyingSpeed * 2 : entity.flyingSpeed
+        inertia = physics.airborneInertia
       } else {
         acceleration = physics.airborneAcceleration
         inertia = physics.airborneInertia
@@ -581,7 +591,7 @@ function Physics (mcData, world) {
 
       applyHeading(entity, strafe, forward, acceleration)
 
-      if (isOnLadder(world, pos)) {
+      if (!entity.flying && isOnLadder(world, pos)) {
         vel.x = math.clamp(-physics.ladderMaxSpeed, vel.x, physics.ladderMaxSpeed)
         vel.z = math.clamp(-physics.ladderMaxSpeed, vel.z, physics.ladderMaxSpeed)
         vel.y = Math.max(vel.y, entity.control.sneak ? 0 : -physics.ladderMaxSpeed)
@@ -589,18 +599,22 @@ function Physics (mcData, world) {
 
       moveEntity(entity, world, vel.x, vel.y, vel.z)
 
-      if (isOnLadder(world, pos) && (entity.isCollidedHorizontally ||
+      if (!entity.flying && isOnLadder(world, pos) && (entity.isCollidedHorizontally ||
         (supportFeature('climbUsingJump') && entity.control.jump))) {
         vel.y = physics.ladderClimbSpeed // climb ladder
       }
 
       // Apply friction and gravity
-      if (entity.levitation > 0) {
-        vel.y += (0.05 * entity.levitation - vel.y) * 0.2
+      if (entity.flying) {
+        vel.y = flightEntryVelY * 0.6
       } else {
-        vel.y -= physics.gravity * gravityMultiplier
+        if (entity.levitation > 0) {
+          vel.y += (0.05 * entity.levitation - vel.y) * 0.2
+        } else {
+          vel.y -= physics.gravity * gravityMultiplier
+        }
+        vel.y *= physics.airdrag
       }
-      vel.y *= physics.airdrag
       vel.x *= inertia
       vel.z *= inertia
     }
@@ -684,10 +698,11 @@ function Physics (mcData, world) {
     return waterBlocks
   }
 
-  function isInWaterApplyCurrent (world, bb, vel) {
+  function isInWaterApplyCurrent (world, bb, vel, pushed) {
     const acceleration = new Vec3(0, 0, 0)
     const waterBlocks = getWaterInBB(world, bb)
     const isInWater = waterBlocks.length > 0
+    if (!pushed) return isInWater
     for (const block of waterBlocks) {
       const flow = getFlow(world, block)
       acceleration.add(flow)
@@ -709,8 +724,16 @@ function Physics (mcData, world) {
     const waterBB = getPlayerBB(pos).contract(0.001, 0.401, 0.001)
     const lavaBB = getPlayerBB(pos).contract(0.1, 0.4, 0.1)
 
-    entity.isInWater = isInWaterApplyCurrent(world, waterBB, vel)
+    // Player.isPushedByFluid is false while flying, so currents leave a flying player alone.
+    entity.isInWater = isInWaterApplyCurrent(world, waterBB, vel, !entity.flying)
     entity.isInLava = isMaterialInBB(world, lavaBB, lavaIds)
+
+    if (entity.flying) {
+      // LocalPlayer.aiStep: jump and sneak climb and descend at three times the flying speed,
+      // added before the move so Player.travel damps it with the rest of the vertical velocity.
+      const vertical = (entity.control.jump ? 1 : 0) - (entity.control.sneak ? 1 : 0)
+      vel.y += vertical * Math.fround(entity.flyingSpeed * 3)
+    }
 
     // Reset velocity component if it falls under the threshold
     if (Math.abs(vel.x) < physics.negligeableVelocity) vel.x = 0
@@ -718,7 +741,9 @@ function Physics (mcData, world) {
     if (Math.abs(vel.z) < physics.negligeableVelocity) vel.z = 0
 
     // Handle inputs
-    if (entity.control.jump || entity.jumpQueued) {
+    // A flying player does not jump: LivingEntity.aiStep gates it on isAffectedByFluids, and
+    // the jump key already climbs above.
+    if (!entity.flying && (entity.control.jump || entity.jumpQueued)) {
       if (entity.jumpTicks > 0) entity.jumpTicks--
       if (entity.isInWater || entity.isInLava) {
         vel.y += 0.04
@@ -820,6 +845,9 @@ class PlayerState {
     this.fireworkRocketDuration = bot.fireworkRocketDuration
 
     // Input only (not modified)
+    // The server owns these: it grants flight in the abilities packet and the client obeys.
+    this.flying = bot.entity.flying ?? false
+    this.flyingSpeed = bot.entity.flyingSpeed ?? 0.05
     this.attributes = bot.entity.attributes
     this.yaw = bot.entity.yaw
     this.pitch = bot.entity.pitch
