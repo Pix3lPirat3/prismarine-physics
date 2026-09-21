@@ -102,6 +102,24 @@ describe('support-growth collision guards', () => {
     assert.ok(entity.pos.y < 61)
   })
 
+  it('does not lift into a full ceiling that crosses an integer Y boundary', () => {
+    // Astra repro: carpet-height feet over a bottom-slab support, with a full stone ceiling at Y=62-63. The support lift
+    // would raise the head to ~62.3, inside the ceiling; the pre-lift block query does not include that cell, so the lift
+    // must be validated against a fresh query of the lifted box. Correct behavior: the lift is rejected (head stays below
+    // the ceiling), NOT raised onto the slab top at 60.5.
+    const world = {
+      getBlock (position) {
+        let shapes = []
+        if (position.equals(new Vec3(0, 60, 0))) shapes = [[0, 0, 0, 1, 0.5, 1]] // bottom slab support (top 60.5)
+        if (position.equals(new Vec3(0, 62, 0))) shapes = [[0, 0, 0, 1, 1, 1]] // full stone ceiling, 62-63
+        return { position: position.clone(), shapes, type: 0 }
+      }
+    }
+    const entity = createEntity(new Vec3(0.5, 60.0625, 0.5))
+    physics.simulatePlayer(entity, world)
+    assert.ok(entity.pos.y < 60.4, `lift into the 62-63 ceiling must be rejected, not raised to the slab top (y=${entity.pos.y})`)
+  })
+
   it('does not move a player already standing on a full block', () => {
     const world = createWorld(Block, 'dirt')
     const entity = createEntity(new Vec3(0.5, 61, 0.5))
