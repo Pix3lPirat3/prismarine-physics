@@ -142,4 +142,28 @@ describe('Basic tests', () => {
     physics.simulatePlayer(state, world).apply(player)
     expect(player.entity.velocity.x).toBeCloseTo(0.030261504, 9)
   })
+
+  it('reads the post-travel velocity for SlimeBlock.stepOn on a 26.1 landing', () => {
+    // 1.21.2+ landing case. The step-on moved to after travel (applyEffectsFromBlocks), so it reads the post-gravity
+    // vel.y (-0.001568) and the drag-reduced horizontal velocity: 0.1 -> slime drag 0.8*0.91 = 0.0728, then step scale
+    // 0.4 + 0.001568*0.2 -> next vx 0.02914283008 (vs the pre-travel 0.030261504 above).
+    const data = require('minecraft-data')('26.1')
+    const VBlock = require('prismarine-block')('26.1')
+    const slime = data.blocksByName.slime_block.id
+    const world = {
+      getBlock: (pos) => {
+        const b = new VBlock(Math.floor(pos.y) <= 60 ? slime : data.blocksByName.air.id, 0, 0)
+        b.position = pos
+        return b
+      }
+    }
+    const physics = Physics(data, world)
+    const player = fakePlayer(new Vec3(0.5, 61, 0.5))
+    player.version = '26.1'
+    player.entity.onGround = true
+    player.entity.velocity = new Vec3(0.1, -0.0784, 0)
+    const state = new PlayerState(player, { forward: false, back: false, left: false, right: false, jump: false, sprint: false, sneak: false })
+    physics.simulatePlayer(state, world).apply(player)
+    expect(player.entity.velocity.x).toBeCloseTo(0.02914283008, 9)
+  })
 })
