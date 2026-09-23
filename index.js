@@ -12,6 +12,11 @@ function Physics (mcData, world) {
   const supportFeature = makeSupportFeature(mcData)
   const blocksByName = mcData.blocksByName
 
+  // Minecraft 1.21.2 moved the block step-on callback (SlimeBlock.stepOn, via applyEffectsFromBlocks) to run AFTER
+  // LivingEntity.travel applies gravity and drag, instead of inside Entity.move before travel. The slime multiplier reads
+  // vel.y, so the timing changes the result: keep the pre-travel call for older versions and a post-travel one from 1.21.2.
+  const slimeStepOnAfterTravel = mcData.version['>=']('1.21.2')
+
   // Block Slipperiness
   // https://www.mcpk.wiki/w/index.php?title=Slipperiness
   const blockSlipperiness = {}
@@ -313,10 +318,11 @@ function Physics (mcData, world) {
       }
     }
 
-    // SlimeBlock.stepOn runs here inside Entity.move - after the landing/bounce sets vel.y, but BEFORE
-    // LivingEntity.travel applies gravity and horizontal drag. The step multiplier reads that vel.y, so it must run at
-    // this point; applying it after travel reads the post-gravity velocity and gives a different result.
-    applyStepOn(entity, world)
+    // Before 1.21.2 the game runs SlimeBlock.stepOn here inside Entity.move - after the landing/bounce sets vel.y but
+    // before LivingEntity.travel applies gravity and drag, so the multiplier reads the bounced vel.y. From 1.21.2 the
+    // callback moved to after travel (slimeStepOnAfterTravel), so for those versions it is applied at the end of the land
+    // branch instead of here.
+    if (!slimeStepOnAfterTravel) applyStepOn(entity, world)
 
     // Finally, apply block collisions (web, soulsand...)
     playerBB.contract(0.001, 0.001, 0.001)
@@ -415,9 +421,9 @@ function Physics (mcData, world) {
     return blockSpeedFactorOf(world.getBlock(getOnPos(entity, 0.500001)))
   }
 
-  // SlimeBlock.stepOn, run from inside moveEntity right after the landing/bounce and before travel applies gravity and
-  // drag (the game's Entity.move order): standing on slime scales the horizontal velocity by 0.4 + |vy| * 0.2 while
-  // |vy| < 0.1, unless sneaking. It reads the bounced/landing vel.y, not the post-travel value.
+  // SlimeBlock.stepOn: standing on slime scales the horizontal velocity by 0.4 + |vy| * 0.2 while |vy| < 0.1, unless
+  // sneaking. It reads whatever vel.y is at the point it runs - the bounced value before travel (pre-1.21.2) or the
+  // post-gravity value after travel (1.21.2+); the callers gate that on slimeStepOnAfterTravel.
   function applyStepOn (entity, world) {
     if (!supportFeature('velocityBlocksOnTop') || !entity.onGround || entity.control.sneak) return
     const onBlock = world.getBlock(getOnPos(entity, 0.2))
@@ -672,6 +678,9 @@ function Physics (mcData, world) {
       vel.y *= physics.airdrag
       vel.x *= inertia
       vel.z *= inertia
+      // 1.21.2+: the block step-on runs after travel's gravity/drag (applyEffectsFromBlocks after LivingEntity.travel), so
+      // it reads the post-travel vel.y and the drag-reduced horizontal velocity.
+      if (slimeStepOnAfterTravel) applyStepOn(entity, world)
     }
   }
 
