@@ -48,5 +48,10 @@
     "name": "sprintSurvivesMinorCollision",
     "description": "A horizontal collision within 8 degrees of the wanted direction (LocalPlayer.isHorizontalCollisionMinor) does not stop sprinting",
     "versions": ["1.18", "1.19", "1.20", "1.21", "26.1", "26.2", "26.3"]
+  },
+  {
+    "name": "stepUpCandidates",
+    "description": "Entity.collide resolves y, then the larger of x and z, with a 1e-7 tolerance, and steps up to the heights of the shapes' edges, lowest first (collectCandidateStepUpHeights); horizontal collision ignores differences under 1e-5",
+    "versions": ["1.21", "26.1", "26.2", "26.3"]
   }
 ]

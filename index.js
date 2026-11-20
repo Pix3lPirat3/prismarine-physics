@@ -156,6 +156,122 @@ function Physics (mcData, world) {
     pos.y += dy
   }
 
+  // Collisions as Entity.collide does them since 1.21: the blocks' shapes are looked for as
+  // BlockCollisions does (one block further out for shapes that reach out of their block), each axis
+  // is resolved in the game's order (y, then the larger of x and z) with its 1e-7 tolerance, and a
+  // step up tries the heights of the shapes' edges, lowest first.
+  const EPS = 1e-7
+  const vanillaCollision = supportFeature('stepUpCandidates')
+
+  // The shapes of the blocks that overlap a box, one list of boxes a block.
+  function collisionShapes (world, box) {
+    const shapes = []
+    const x0 = Math.floor(box.minX - EPS) - 1
+    const x1 = Math.floor(box.maxX + EPS) + 1
+    const y0 = Math.floor(box.minY - EPS) - 1
+    const y1 = Math.floor(box.maxY + EPS) + 1
+    const z0 = Math.floor(box.minZ - EPS) - 1
+    const z1 = Math.floor(box.maxZ + EPS) + 1
+    const cursor = new Vec3(0, 0, 0)
+    for (cursor.y = y0; cursor.y <= y1; cursor.y++) {
+      for (cursor.z = z0; cursor.z <= z1; cursor.z++) {
+        for (cursor.x = x0; cursor.x <= x1; cursor.x++) {
+          const edges = (cursor.x === x0 || cursor.x === x1 ? 1 : 0) + (cursor.y === y0 || cursor.y === y1 ? 1 : 0) + (cursor.z === z0 || cursor.z === z1 ? 1 : 0)
+          if (edges >= 2) continue
+          const block = world.getBlock(cursor)
+          if (!block || !block.shapes || block.shapes.length === 0) continue
+          // On the outer layer only a block whose shape reaches out of its own block counts
+          if (edges === 1 && !block.shapes.some(s => s[0] < 0 || s[1] < 0 || s[2] < 0 || s[3] > 1 || s[4] > 1 || s[5] > 1)) continue
+          const p = block.position
+          const boxes = block.shapes.map(s => new AABB(s[0] + p.x, s[1] + p.y, s[2] + p.z, s[3] + p.x, s[4] + p.y, s[5] + p.z))
+          if (boxes.some(b => b.maxX > box.minX && b.minX < box.maxX && b.maxY > box.minY && b.minY < box.maxY && b.maxZ > box.minZ && b.minZ < box.maxZ)) shapes.push(boxes)
+        }
+      }
+    }
+    return shapes
+  }
+
+  const AXES = {
+    x: ['minX', 'maxX', 'minY', 'maxY', 'minZ', 'maxZ'],
+    y: ['minY', 'maxY', 'minX', 'maxX', 'minZ', 'maxZ'],
+    z: ['minZ', 'maxZ', 'minX', 'maxX', 'minY', 'maxY']
+  }
+
+  // How far a box can move along an axis among the shapes (Shapes.collide).
+  function collideAxis (axis, box, shapes, distance) {
+    const [min, max, bMin, bMax, cMin, cMax] = AXES[axis]
+    for (const boxes of shapes) {
+      if (Math.abs(distance) < EPS) return 0
+      let d = distance
+      for (const b of boxes) {
+        if (b[bMax] <= box[bMin] + EPS || b[bMin] >= box[bMax] - EPS || b[cMax] <= box[cMin] + EPS || b[cMin] >= box[cMax] - EPS) continue
+        if (distance > 0 && b[min] > box[max] - EPS) {
+          const next = b[min] - box[max]
+          if (next >= -EPS) d = Math.min(d, next)
+        } else if (distance < 0 && b[max] < box[min] + EPS) {
+          const next = b[max] - box[min]
+          if (next <= EPS) d = Math.max(d, next)
+        }
+      }
+      distance = d
+    }
+    return distance
+  }
+
+  // Entity.collideWithShapes: y first, then the larger of x and z.
+  function collideWithShapes (move, box, shapes) {
+    if (shapes.length === 0) return { x: move.x, y: move.y, z: move.z }
+    const done = { x: 0, y: 0, z: 0 }
+    const order = Math.abs(move.x) < Math.abs(move.z) ? ['y', 'z', 'x'] : ['y', 'x', 'z']
+    for (const axis of order) {
+      if (move[axis] === 0) continue
+      const moved = box.clone().offset(done.x, done.y, done.z)
+      done[axis] = collideAxis(axis, moved, shapes, move[axis])
+    }
+    return done
+  }
+
+  function expandTowards (box, x, y, z) {
+    return box.clone().extend(x, y, z)
+  }
+
+  // Entity.collide, without entities and the world border.
+  function collide (entity, world, box, move) {
+    const lengthSqr = move.x * move.x + move.y * move.y + move.z * move.z
+    const step = lengthSqr === 0 ? { x: move.x, y: move.y, z: move.z } : collideWithShapes(move, box, collisionShapes(world, expandTowards(box, move.x, move.y, move.z)))
+    const xCollision = move.x !== step.x
+    const yCollision = move.y !== step.y
+    const zCollision = move.z !== step.z
+    const onGroundAfter = yCollision && move.y < 0
+    const maxUpStep = Math.fround(physics.stepHeight)
+    if (maxUpStep > 0 && (onGroundAfter || entity.onGround) && (xCollision || zCollision)) {
+      const grounded = onGroundAfter ? box.clone().offset(0, step.y, 0) : box
+      let stepBox = expandTowards(grounded, move.x, maxUpStep, move.z)
+      if (!onGroundAfter) stepBox = expandTowards(stepBox, 0, Math.fround(-1e-5), 0)
+      const colliders = collisionShapes(world, stepBox)
+      const skip = Math.fround(step.y)
+      const heights = new Set()
+      for (const boxes of colliders) {
+        const coords = [...new Set(boxes.flatMap(b => [b.minY, b.maxY]))].sort((a, b) => a - b)
+        for (const coord of coords) {
+          const h = Math.fround(coord - grounded.minY)
+          if (h < 0 || h === skip) continue
+          if (h > maxUpStep) break
+          heights.add(h)
+        }
+      }
+      const stepSqr = step.x * step.x + step.z * step.z
+      for (const h of [...heights].sort((a, b) => a - b)) {
+        const up = collideWithShapes({ x: move.x, y: h, z: move.z }, grounded, colliders)
+        if (up.x * up.x + up.z * up.z > stepSqr) {
+          up.y -= box.minY - grounded.minY
+          return up
+        }
+      }
+    }
+    return step
+  }
+
   function moveEntity (entity, world, dx, dy, dz) {
     const vel = entity.vel
     const pos = entity.pos
@@ -205,108 +321,119 @@ function Physics (mcData, world) {
     }
 
     let playerBB = getPlayerBB(pos)
-    const queryBB = playerBB.clone().extend(dx, dy, dz)
-    const surroundingBBs = getSurroundingBBs(world, queryBB)
-    const oldBB = playerBB.clone()
-
-    for (const blockBB of surroundingBBs) {
-      dy = blockBB.computeOffsetY(playerBB, dy)
-    }
-    playerBB.offset(0, dy, 0)
-
-    for (const blockBB of surroundingBBs) {
-      dx = blockBB.computeOffsetX(playerBB, dx)
-    }
-    playerBB.offset(dx, 0, 0)
-
-    for (const blockBB of surroundingBBs) {
-      dz = blockBB.computeOffsetZ(playerBB, dz)
-    }
-    playerBB.offset(0, 0, dz)
-
-    // Step on block if height < stepHeight
-    if (physics.stepHeight > 0 &&
-      (entity.onGround || (dy !== oldVelY && oldVelY < 0)) &&
-      (dx !== oldVelX || dz !== oldVelZ)) {
-      const oldVelXCol = dx
-      const oldVelYCol = dy
-      const oldVelZCol = dz
-      const oldBBCol = playerBB.clone()
-
-      dy = physics.stepHeight
-      const queryBB = oldBB.clone().extend(oldVelX, dy, oldVelZ)
+    if (vanillaCollision) {
+      const moved = collide(entity, world, playerBB, { x: dx, y: dy, z: dz })
+      dx = moved.x
+      dy = moved.y
+      dz = moved.z
+      playerBB.offset(dx, dy, dz)
+    } else {
+      const queryBB = playerBB.clone().extend(dx, dy, dz)
       const surroundingBBs = getSurroundingBBs(world, queryBB)
-
-      const BB1 = oldBB.clone()
-      const BB2 = oldBB.clone()
-      const BB_XZ = BB1.clone().extend(oldVelX, 0, oldVelZ)
-
-      let dy1 = dy
-      let dy2 = dy
-      for (const blockBB of surroundingBBs) {
-        dy1 = blockBB.computeOffsetY(BB_XZ, dy1)
-        dy2 = blockBB.computeOffsetY(BB2, dy2)
-      }
-      BB1.offset(0, dy1, 0)
-      BB2.offset(0, dy2, 0)
-
-      let dx1 = oldVelX
-      let dx2 = oldVelX
-      for (const blockBB of surroundingBBs) {
-        dx1 = blockBB.computeOffsetX(BB1, dx1)
-        dx2 = blockBB.computeOffsetX(BB2, dx2)
-      }
-      BB1.offset(dx1, 0, 0)
-      BB2.offset(dx2, 0, 0)
-
-      let dz1 = oldVelZ
-      let dz2 = oldVelZ
-      for (const blockBB of surroundingBBs) {
-        dz1 = blockBB.computeOffsetZ(BB1, dz1)
-        dz2 = blockBB.computeOffsetZ(BB2, dz2)
-      }
-      BB1.offset(0, 0, dz1)
-      BB2.offset(0, 0, dz2)
-
-      const norm1 = dx1 * dx1 + dz1 * dz1
-      const norm2 = dx2 * dx2 + dz2 * dz2
-
-      if (norm1 > norm2) {
-        dx = dx1
-        dy = -dy1
-        dz = dz1
-        playerBB = BB1
-      } else {
-        dx = dx2
-        dy = -dy2
-        dz = dz2
-        playerBB = BB2
-      }
+      const oldBB = playerBB.clone()
 
       for (const blockBB of surroundingBBs) {
         dy = blockBB.computeOffsetY(playerBB, dy)
       }
       playerBB.offset(0, dy, 0)
 
-      if (oldVelXCol * oldVelXCol + oldVelZCol * oldVelZCol >= dx * dx + dz * dz) {
-        dx = oldVelXCol
-        dy = oldVelYCol
-        dz = oldVelZCol
-        playerBB = oldBBCol
+      for (const blockBB of surroundingBBs) {
+        dx = blockBB.computeOffsetX(playerBB, dx)
+      }
+      playerBB.offset(dx, 0, 0)
+
+      for (const blockBB of surroundingBBs) {
+        dz = blockBB.computeOffsetZ(playerBB, dz)
+      }
+      playerBB.offset(0, 0, dz)
+
+      // Step on block if height < stepHeight
+      if (physics.stepHeight > 0 &&
+        (entity.onGround || (dy !== oldVelY && oldVelY < 0)) &&
+        (dx !== oldVelX || dz !== oldVelZ)) {
+        const oldVelXCol = dx
+        const oldVelYCol = dy
+        const oldVelZCol = dz
+        const oldBBCol = playerBB.clone()
+
+        dy = physics.stepHeight
+        const queryBB = oldBB.clone().extend(oldVelX, dy, oldVelZ)
+        const surroundingBBs = getSurroundingBBs(world, queryBB)
+
+        const BB1 = oldBB.clone()
+        const BB2 = oldBB.clone()
+        const BB_XZ = BB1.clone().extend(oldVelX, 0, oldVelZ)
+
+        let dy1 = dy
+        let dy2 = dy
+        for (const blockBB of surroundingBBs) {
+          dy1 = blockBB.computeOffsetY(BB_XZ, dy1)
+          dy2 = blockBB.computeOffsetY(BB2, dy2)
+        }
+        BB1.offset(0, dy1, 0)
+        BB2.offset(0, dy2, 0)
+
+        let dx1 = oldVelX
+        let dx2 = oldVelX
+        for (const blockBB of surroundingBBs) {
+          dx1 = blockBB.computeOffsetX(BB1, dx1)
+          dx2 = blockBB.computeOffsetX(BB2, dx2)
+        }
+        BB1.offset(dx1, 0, 0)
+        BB2.offset(dx2, 0, 0)
+
+        let dz1 = oldVelZ
+        let dz2 = oldVelZ
+        for (const blockBB of surroundingBBs) {
+          dz1 = blockBB.computeOffsetZ(BB1, dz1)
+          dz2 = blockBB.computeOffsetZ(BB2, dz2)
+        }
+        BB1.offset(0, 0, dz1)
+        BB2.offset(0, 0, dz2)
+
+        const norm1 = dx1 * dx1 + dz1 * dz1
+        const norm2 = dx2 * dx2 + dz2 * dz2
+
+        if (norm1 > norm2) {
+          dx = dx1
+          dy = -dy1
+          dz = dz1
+          playerBB = BB1
+        } else {
+          dx = dx2
+          dy = -dy2
+          dz = dz2
+          playerBB = BB2
+        }
+
+        for (const blockBB of surroundingBBs) {
+          dy = blockBB.computeOffsetY(playerBB, dy)
+        }
+        playerBB.offset(0, dy, 0)
+
+        if (oldVelXCol * oldVelXCol + oldVelZCol * oldVelZCol >= dx * dx + dz * dz) {
+          dx = oldVelXCol
+          dy = oldVelYCol
+          dz = oldVelZCol
+          playerBB = oldBBCol
+        }
       }
     }
 
     // Update flags
     setPositionToBB(playerBB, pos)
-    entity.isCollidedHorizontally = dx !== oldVelX || dz !== oldVelZ
+    // Since 1.21 a difference under 1e-5 (Mth.equal) is no collision
+    const xCollided = vanillaCollision ? Math.abs(dx - oldVelX) >= 1e-5 : dx !== oldVelX
+    const zCollided = vanillaCollision ? Math.abs(dz - oldVelZ) >= 1e-5 : dz !== oldVelZ
+    entity.isCollidedHorizontally = xCollided || zCollided
     entity.minorHorizontalCollision = entity.isCollidedHorizontally && isHorizontalCollisionMinor(entity, dx, dz)
     entity.isCollidedVertically = dy !== oldVelY
     entity.onGround = entity.isCollidedVertically && oldVelY < 0
 
     const blockAtFeet = world.getBlock(pos.offset(0, -0.2, 0))
 
-    if (dx !== oldVelX) vel.x = 0
-    if (dz !== oldVelZ) vel.z = 0
+    if (xCollided) vel.x = 0
+    if (zCollided) vel.z = 0
     if (dy !== oldVelY) {
       if (blockAtFeet && blockAtFeet.type === slimeBlockId && !entity.control.sneak) {
         vel.y = -vel.y
